@@ -36,6 +36,7 @@
 #include <ws2tcpip.h>
 #endif
 
+#include <stdlib.h>
 #include "gpsd.h"
 #include "sockaddr.h"
 
@@ -51,21 +52,31 @@
 socket_t netlib_connectsock(int af, const char *host, const char *service,
 			    const char *protocol)
 {
-    struct protoent *ppe;
+    struct protoent *ppe = NULL;
     struct addrinfo hints;
-    struct addrinfo *result, *rp;
+    struct addrinfo *result = NULL, *rp;
+    struct sockaddr_in ip_address;
     int ret, type, proto, one = 1;
     socket_t s;
     bool bind_me;
 
     INVALIDATE_SOCKET(s);
-    ppe = getprotobyname(protocol);
-    if (strcmp(protocol, "udp") == 0) {
-	type = SOCK_DGRAM;
-	proto = (ppe) ? ppe->p_proto : IPPROTO_UDP;
-    } else {
-	type = SOCK_STREAM;
-	proto = (ppe) ? ppe->p_proto : IPPROTO_TCP;
+    memset(&ip_address, 0, sizeof(ip_address));
+    ip_address.sin_port = htons(atoi(service));
+    if (0 == ip_address.sin_port)
+    {
+        /*@-type@*/
+        ppe = getprotobyname(protocol);
+    }
+    if (strcmp(protocol, "udp") == 0)
+    {
+        type = SOCK_DGRAM;
+        proto = (ppe) ? ppe->p_proto : IPPROTO_UDP;
+    }
+    else
+    {
+        type = SOCK_STREAM;
+        proto = (ppe) ? ppe->p_proto : IPPROTO_TCP;
     }
 
     /* we probably ought to pass this in as an explicit flag argument */
@@ -77,8 +88,22 @@ socket_t netlib_connectsock(int af, const char *host, const char *service,
     hints.ai_protocol = proto;
     if (bind_me)
 	hints.ai_flags = AI_PASSIVE;
-    if ((ret = getaddrinfo(host, service, &hints, &result))) {
-	return NL_NOHOST;
+    inet_pton(AF_INET, host, &ip_address.sin_addr.s_addr);
+    if (0 == ip_address.sin_addr.s_addr)
+    {
+        if ((ret = getaddrinfo(host, service, &hints, &result)))
+        {
+            return NL_NOHOST;
+        }
+    }
+    else
+    {
+        hints.ai_family = AF_INET;
+        ip_address.sin_family = AF_INET;
+        ip_address.sin_port = htons(atoi(service));
+        hints.ai_addr = (struct sockaddr*) &ip_address;
+        hints.ai_addrlen = sizeof(ip_address);
+        result = &hints;
     }
 
     /*
@@ -121,7 +146,11 @@ socket_t netlib_connectsock(int af, const char *host, const char *service,
 #endif
 	}
     }
-    freeaddrinfo(result);
+    if ((result != &hints) && (result != NULL))
+    {
+        freeaddrinfo(result);
+    }
+
     if (ret != 0 || BAD_SOCKET(s))
 	return ret;
 
